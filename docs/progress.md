@@ -4,237 +4,108 @@ Last updated: 2026-06-08 JST
 
 ## Current Status
 
-The project has a working MVP for a realtime accompanist demo.
+The system has been rearchitected to match the original requirements: **phrase-based windowed estimation** with a **musical clock** driving chord changes at **bar boundaries**, and **continuous accompaniment loop** playback.
 
-The important product decision is that MIDI hardware and audio output are not required for the current automated verification loop. The core melody input, key estimation, chord estimation, smoothing, and accompaniment-event generation can be exercised from the Web UI and from tests.
+Previous state: single-note reactive system (every note triggered full-history re-estimation and one-shot accompaniment).
+
+Current state: clock-driven, window-based estimation with continuous bar-looping accompaniment.
+
+## Key Changes In This Session
+
+### 1. Musical Clock (`domain/clock.py`) — NEW
+- BPM-based beat/bar position tracking
+- Bar/beat boundary detection
+- Start/stop/reset lifecycle
+- BPM changes preserve accumulated position
+
+### 2. Windowed Estimation — FIXED
+- **Key estimation**: uses last 16 beats (~4 bars) via `MelodyBuffer.recent_beats()`
+- **Chord estimation**: uses last 4 beats (~1 bar) via `MelodyBuffer.recent_beats()`
+- Previously used full note history (100+ notes), now uses contextually relevant window
+- Matches R2 ("直近2〜4小節") and R3 ("直近1小節") requirements
+
+### 3. Session Rearchitecture — MAJOR CHANGE
+- `tick()` method called by server loop every ~100ms
+- Chord changes only at bar boundaries (not on every note input)
+- `note_on`/`note_off` for real MIDI-style input with measured duration
+- `add_note` preserved for simplified web input
+- Key lock feature added
+- Demo phrases now use realistic beat-positioned notes
+
+### 4. Continuous Accompaniment — FIXED
+- Server tick loop broadcasts state via WebSocket
+- Client plays accompaniment in repeating bar-length loop
+- Chord changes update loop content without restarting rhythm
+- Note input and accompaniment playback are decoupled
+
+### 5. FastAPI Modernization
+- Migrated from deprecated `on_event` to `lifespan` context manager
+- Added `/api/note-on`, `/api/note-off`, `/api/controls/key-lock` endpoints
 
 ## Repository State
 
-- Branch: `main`
-- Remote: `https://github.com/orikage/realtime_accompanist.git`
-- Latest pushed commit: `20b465d Serve Pages demo from repository root`
-- Working tree at handoff: clean
-
-Recent commits:
-
-```text
-20b465d Serve Pages demo from repository root
-5f2ac34 Enable GitHub Pages deployment from Actions
-41ae398 Build realtime accompanist MVP with CI and Pages
-```
-
-## Published Demo
-
-GitHub Pages:
-
-```text
-https://orikage.github.io/realtime_accompanist/
-```
-
-The Pages demo is a static browser-only version. It does not call the FastAPI backend. It exists so the UI and estimation experience can be viewed from GitHub Pages.
-
-Verified on 2026-06-08:
-
-- Public URL returns HTTP 200.
-- `Demo C` works in browser.
-- It shows `C major`, selected chord `C`, confidence `100%`.
-- Generated accompaniment events are displayed.
-- Browser console had no errors during the check.
-- No horizontal overflow was observed in the checked viewport.
-
-## Local App
-
-Run:
-
-```powershell
-.\scripts\run_dev.ps1
-```
-
-Open:
-
-```text
-http://127.0.0.1:8000
-```
-
-The local app is the fuller FastAPI-backed version with:
-
-- Static Web UI
-- REST API
-- WebSocket state endpoint
-- Web note input
-- Demo phrase input
-- Style changes
-- Bias changes
-- Manual chord override
-- Reset
-
-## CI/CD
-
-Workflow:
-
-```text
-.github/workflows/ci-pages.yml
-```
-
-Current behavior:
-
-- Runs on pushes to `main`.
-- Runs on pull requests.
-- Installs the Python package in editable mode with dev dependencies.
-- Runs coverage-gated tests:
-
-```powershell
-python -m pytest --cov=realtime_accompanist --cov-report=term-missing --cov-fail-under=85
-```
-
-- Deploys `site/` to GitHub Pages after tests pass.
-
-Latest checked GitHub Actions runs:
-
-```text
-completed success  Serve Pages demo from repository root  CI and Pages
-completed success  pages build and deployment              pages-build-deployment
-completed success  Enable GitHub Pages deployment from Actions  CI and Pages
-```
-
-Note: GitHub emitted a Node.js 20 deprecation annotation for upstream actions. The workflow sets `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true`, so the job succeeds while forcing Node 24 where GitHub supports it.
+- Branch: `claude/amazing-roentgen-6f5205`
+- Working tree: modified (not yet committed)
 
 ## Test Status
 
-Latest local quality gate:
-
 ```text
-31 passed
-Total coverage: 91.90%
+47 passed
+Total coverage: 90.55%
 Coverage gate: 85%
 ```
 
-Known warning:
-
-```text
-StarletteDeprecationWarning from fastapi.testclient importing Starlette TestClient
-```
-
-This is dependency-level noise, not a failing behavior in the app.
-
-Current automated coverage includes:
-
-- Music theory primitives
-- Melody buffer
-- Key estimator
-- Chord estimator
-- Progression smoother
-- Accompaniment event generation
-- FastAPI session and API behavior
-- Invalid API payload handling
-- Static GitHub Pages artifact checks
-- Root Pages files matching the `site/` artifact files
+New tests added:
+- `test_clock.py`: 8 tests for MusicalClock
+- `test_session_api.py`: expanded from 6 to 14 tests (windowed estimation, tick, note_on/off, key lock, demo phrases)
 
 ## Architecture Snapshot
 
-Important folders:
-
 ```text
 src/realtime_accompanist/
-  domain/        Pure-ish music rules and estimation logic
-  application/   AccompanistSession use case/state orchestration
-  web/           FastAPI app and backend-served static UI
-site/            GitHub Pages static browser demo
-docs/            Goal, ZIP-derived requirements, architecture, plans, handoff docs
-tests/           Automated regression and quality tests
+  domain/
+    clock.py           NEW — Musical clock with BPM/beat/bar tracking
+    melody_buffer.py   Window query methods now used by session
+    key_estimator.py   Unchanged (receives windowed input from session)
+    chord_estimator.py Unchanged (receives windowed input from session)
+    progression_smoother.py  Unchanged
+    accompaniment.py   Unchanged
+    theory.py          Unchanged
+    models.py          Unchanged
+  application/
+    session.py         MAJOR REWORK — clock-driven, windowed, tick-based
+  web/
+    app.py             Tick loop, lifespan, new endpoints
+    static/app.js      Continuous accompaniment loop, note_on/off, WebSocket
 ```
-
-Design intent:
-
-- Keep MIDI and audio hardware adapters outside the core domain logic.
-- Keep estimation and accompaniment generation testable without hardware.
-- Treat chord inference as candidates with confidence, not as a single guaranteed truth.
-- Use light domain/application/web separation rather than heavy DDD.
-
-## Important Files For Next Session
-
-- `docs/goal.md`: original project goal derived from the pasted text.
-- `docs/initial-plan.md`: implementation direction chosen for the MVP.
-- `README.md`: run, test, Pages, and architecture summary.
-- `src/realtime_accompanist/application/session.py`: main app orchestration.
-- `src/realtime_accompanist/domain/key_estimator.py`: key estimation.
-- `src/realtime_accompanist/domain/chord_estimator.py`: chord estimation.
-- `src/realtime_accompanist/domain/progression_smoother.py`: chord selection smoothing.
-- `src/realtime_accompanist/domain/accompaniment.py`: accompaniment event generation.
-- `src/realtime_accompanist/web/app.py`: FastAPI API and WebSocket.
-- `site/app.js`: static Pages demo logic.
-- `.github/workflows/ci-pages.yml`: CI and Pages deployment.
-
-## Completed Work
-
-- Saved `/goal` to `docs/goal.md`.
-- Copied ZIP-derived planning/spec documents to `docs/`.
-- Built Python package with `pyproject.toml`.
-- Implemented domain logic for theory, key candidates, chord candidates, smoothing, and accompaniment events.
-- Implemented FastAPI-backed Web UI for MIDI-free I/O testing.
-- Implemented static GitHub Pages demo.
-- Added automated tests and coverage gate.
-- Added GitHub Actions CI/CD.
-- Enabled and verified GitHub Pages deployment.
-- Pushed current work to GitHub.
-- Replaced the Web keyboard grid with a piano-style keyboard:
-  - 10 white keys from C4 to E5.
-  - 7 black keys overlaid between the white keys.
-  - Works in both the static GitHub Pages demo and the FastAPI-backed local UI.
-  - UI updates before WebAudio arming so note input remains responsive even when browser audio setup is delayed.
 
 ## Known Gaps And Risks
 
 MIDI hardware input is not implemented yet.
+- Current mitigation: `note_on`/`note_off` API matches MIDI semantics, Web keyboard uses pointer down/up.
+- Next step: thin MIDI adapter calling `session.note_on`/`session.note_off`.
 
-- Current mitigation: Web note input and demo phrases exercise the same core logic.
-- Recommended next step: add a thin MIDI adapter behind an interface and test parsing with synthetic messages.
+Audio output is WebAudio synth only.
+- Current mitigation: browser-based synth with drums, bass, pad voices.
+- Next step: FluidSynth or MIDI output adapter.
 
-Audio output is not implemented yet.
-
-- Current mitigation: accompaniment is represented as deterministic events.
-- Recommended next step: add a sound/MIDI output adapter and keep unit tests focused on generated event contracts.
-
-Static Pages and FastAPI UI have duplicated frontend logic.
-
-- Current mitigation: tests ensure root Pages files match `site/` files.
-- Risk: backend-served UI under `src/realtime_accompanist/web/static/` can drift from Pages UI.
-- Recommended next step: either share generated assets or add a simple copy/check script.
-
-Musical correctness is intentionally heuristic.
-
-- Current mitigation: tests cover representative C major, A minor, C/E/G, A/C/E/G, F/A/C, smoothing, low confidence, and empty input behavior.
-- Recommended next step: add golden phrase fixtures from actual demo melodies.
+Static Pages demo has not been updated for the new frontend.
+- The `site/` directory still has the old one-shot accompaniment code.
+- Next step: sync `site/` with `src/realtime_accompanist/web/static/` or decide canonical source.
 
 ## Suggested Next Tasks
 
-1. Add a `midi` adapter module with a small interface:
-   - `list_devices()`
-   - `open_input(name=None)`
-   - `iter_note_events()`
-   - Synthetic tests for `note_on`, `note_off`, and velocity-zero note-off.
+1. **MIDI adapter**: thin adapter using `mido` or `rtmidi` that maps hardware note_on/note_off to `session.note_on`/`session.note_off`.
 
-2. Add an output adapter:
-   - Start with MIDI event export/logging before FluidSynth.
-   - Keep `AccompanimentEvent` as the tested contract.
+2. **Sync static Pages demo**: update `site/` to match the new continuous-loop frontend, or set up a build/copy step.
 
-3. Add frontend regression checks:
-   - Use a browser automation test for `Demo C`, style switch, bias switch, and manual chord override.
-   - This can be Playwright-based later if a Node test stack is introduced.
+3. **BPM tap tempo**: allow user to tap a button to set BPM from actual rhythm.
 
-4. Reduce frontend duplication:
-   - Decide whether `site/` or `src/realtime_accompanist/web/static/` is canonical.
-   - Add a script to sync the other location.
+4. **Confidence-driven density in real time**: currently density is computed per-snapshot, but could be smoothed over time.
 
-5. Add real demo phrase fixtures:
-   - C major clear phrase.
-   - A minor/C ambiguous phrase.
-   - Phrase designed to show low confidence.
-   - Phrase designed to show style differences.
+5. **Browser test**: Playwright test for demo → continuous loop → style switch flow.
 
 ## Handoff Prompt
-
-Use this prompt to continue in a new session:
 
 ```text
 You are continuing the realtime_accompanist project.
@@ -242,21 +113,17 @@ You are continuing the realtime_accompanist project.
 Read these first:
 - docs/progress.md
 - docs/goal.md
+- docs/architecture.md
 - README.md
-- docs/initial-plan.md
 
 Current state:
-- GitHub Pages is published at https://orikage.github.io/realtime_accompanist/
-- CI/CD is in .github/workflows/ci-pages.yml
-- Tests currently pass with 31 tests and 91.90% coverage.
-- The MVP intentionally supports Web I/O before real MIDI hardware.
+- System was rearchitected: clock-driven, windowed estimation, bar-boundary chord changes, continuous accompaniment loop.
+- Tests: 47 passed, 90.55% coverage.
+- The key change: estimation now uses windowed data (16-beat for key, 4-beat for chord) instead of full history.
 
 Do not replace the architecture with a large framework.
 Keep MIDI/audio as thin adapters around the tested domain logic.
 Before changing behavior, add or update tests.
 Run:
 python -m pytest --cov=realtime_accompanist --cov-report=term-missing --cov-fail-under=85
-
-Recommended next task:
-Add a thin MIDI input adapter with synthetic message tests, while preserving the Web I/O demo.
 ```

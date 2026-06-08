@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -13,6 +16,15 @@ class NotePayload(BaseModel):
     note: int = Field(ge=0, le=127)
     velocity: int = Field(default=96, ge=0, le=127)
     duration: float = Field(default=0.35, gt=0, le=8)
+
+
+class NoteOnPayload(BaseModel):
+    note: int = Field(ge=0, le=127)
+    velocity: int = Field(default=96, ge=0, le=127)
+
+
+class NoteOffPayload(BaseModel):
+    note: int = Field(ge=0, le=127)
 
 
 class StylePayload(BaseModel):
@@ -46,9 +58,28 @@ class ConnectionManager:
             except RuntimeError:
                 self.disconnect(websocket)
 
+    @property
+    def has_connections(self) -> bool:
+        return len(self._connections) > 0
+
 
 def create_app(session: AccompanistSession | None = None) -> FastAPI:
-    app = FastAPI(title="Realtime Accompanist")
+    @asynccontextmanager
+    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        async def tick_loop() -> None:
+            sess: AccompanistSession = application.state.session
+            mgr: ConnectionManager = application.state.manager
+            while True:
+                if sess.clock.running and mgr.has_connections:
+                    state = sess.tick()
+                    await mgr.broadcast(state)
+                await asyncio.sleep(0.1)
+
+        task = asyncio.create_task(tick_loop())
+        yield
+        task.cancel()
+
+    app = FastAPI(title="Realtime Accompanist", lifespan=lifespan)
     app.state.session = session or AccompanistSession()
     app.state.manager = ConnectionManager()
 
@@ -64,6 +95,14 @@ def create_app(session: AccompanistSession | None = None) -> FastAPI:
     async def add_note(payload: NotePayload) -> dict:
         return await publish(app.state.session.add_note(payload.note, payload.velocity, payload.duration))
 
+    @app.post("/api/note-on")
+    async def note_on(payload: NoteOnPayload) -> dict:
+        return await publish(app.state.session.note_on(payload.note, payload.velocity))
+
+    @app.post("/api/note-off")
+    async def note_off(payload: NoteOffPayload) -> dict:
+        return await publish(app.state.session.note_off(payload.note))
+
     @app.post("/api/controls/style")
     async def set_style(payload: StylePayload) -> dict:
         return await publish(app.state.session.set_style(payload.style))
@@ -75,6 +114,10 @@ def create_app(session: AccompanistSession | None = None) -> FastAPI:
     @app.post("/api/controls/chord")
     async def select_chord(payload: ChordPayload) -> dict:
         return await publish(app.state.session.select_chord(payload.symbol))
+
+    @app.post("/api/controls/key-lock")
+    async def toggle_key_lock() -> dict:
+        return await publish(app.state.session.toggle_key_lock())
 
     @app.post("/api/reset")
     async def reset() -> dict:
@@ -101,4 +144,3 @@ def create_app(session: AccompanistSession | None = None) -> FastAPI:
 
 
 app = create_app()
-
