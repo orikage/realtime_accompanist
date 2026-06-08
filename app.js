@@ -6,21 +6,26 @@ const demos = {
   ambiguous: [69, 72, 76, 79, 76, 72],
   "genre-switch": [60, 64, 67, 71, 72, 76],
 };
-const noteButtons = [
-  ["C4", 60, false],
-  ["D4", 62, false],
-  ["E4", 64, false],
-  ["F4", 65, false],
-  ["G4", 67, false],
-  ["A4", 69, false],
-  ["B4", 71, false],
-  ["C#4", 61, true],
-  ["D#4", 63, true],
-  ["F#4", 66, true],
-  ["G#4", 68, true],
-  ["A#4", 70, true],
-  ["C5", 72, false],
-  ["E5", 76, false],
+const whiteKeys = [
+  ["C4", 60],
+  ["D4", 62],
+  ["E4", 64],
+  ["F4", 65],
+  ["G4", 67],
+  ["A4", 69],
+  ["B4", 71],
+  ["C5", 72],
+  ["D5", 74],
+  ["E5", 76],
+];
+const blackKeys = [
+  ["C#4", 61, 10],
+  ["D#4", 63, 20],
+  ["F#4", 66, 40],
+  ["G#4", 68, 50],
+  ["A#4", 70, 60],
+  ["C#5", 73, 80],
+  ["D#5", 75, 90],
 ];
 const keyboard = document.querySelector("#keyboard");
 const audioToggle = document.querySelector("#audio-toggle");
@@ -403,12 +408,13 @@ function recordNote(note) {
 
 async function addNote(note) {
   const safeNote = normalizeNote(note);
-  await sound.arm();
   recordNote(safeNote);
-  sound.playNote(safeNote, 104, 0.4, "lead");
   flashKey(safeNote);
   render();
-  sound.playAccompaniment(renderedEvents, renderedBpm);
+  sound.arm().then(() => {
+    sound.playNote(safeNote, 104, 0.4, "lead");
+    sound.playAccompaniment(renderedEvents, renderedBpm);
+  });
 }
 
 function render() {
@@ -431,10 +437,9 @@ function render() {
   document.querySelector("#recent-notes").innerHTML = state.notes.slice().reverse().map((note) => `<div class="note">${names[pc(note.note)]}<br><small>${note.note}</small></div>`).join("");
   document.querySelector("#events").innerHTML = renderedEvents.map((event) => `<div class="event-row">${event.part} note ${event.note} @ beat ${event.beat}</div>`).join("");
   document.querySelectorAll("[data-chord]").forEach((button) => button.addEventListener("click", async () => {
-    await sound.arm();
     state.selectedChord = button.dataset.chord;
     render();
-    sound.playAccompaniment(renderedEvents, renderedBpm);
+    sound.arm().then(() => sound.playAccompaniment(renderedEvents, renderedBpm));
   }));
   document.querySelectorAll("[data-style]").forEach((button) => button.classList.toggle("active", button.dataset.style === state.style));
   document.querySelectorAll("[data-bias]").forEach((button) => button.classList.toggle("active", button.dataset.bias === state.bias));
@@ -448,18 +453,26 @@ function flashKey(note) {
 }
 
 function boot() {
-  keyboard.innerHTML = noteButtons.map(([label, note, black]) => `<button class="${black ? "black" : ""}" data-note="${note}">${label}</button>`).join("");
-  document.querySelectorAll("[data-note]").forEach((button) => {
-    let pointerSentAt = 0;
-    button.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      pointerSentAt = Date.now();
-      addNote(Number(button.dataset.note));
-    });
-    button.addEventListener("click", () => {
-      if (Date.now() - pointerSentAt < 500) return;
-      addNote(Number(button.dataset.note));
-    });
+  keyboard.innerHTML = `
+    <div class="white-keys">
+      ${whiteKeys.map(([label, note]) => `<button class="key white" data-note="${note}"><span>${label}</span></button>`).join("")}
+    </div>
+    <div class="black-keys" aria-hidden="false">
+      ${blackKeys.map(([label, note, left]) => `<button class="key black" style="--left: ${left}" data-note="${note}"><span>${label}</span></button>`).join("")}
+    </div>
+  `;
+  let pointerSentAt = 0;
+  keyboard.addEventListener("pointerdown", (event) => {
+    const button = event.target.closest("[data-note]");
+    if (!button) return;
+    event.preventDefault();
+    pointerSentAt = Date.now();
+    addNote(Number(button.dataset.note));
+  });
+  keyboard.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-note]");
+    if (!button || Date.now() - pointerSentAt < 500) return;
+    addNote(Number(button.dataset.note));
   });
   document.querySelector("#send-note").addEventListener("click", () => {
     addNote(document.querySelector("#note-input").value);
@@ -472,27 +485,28 @@ function boot() {
     render();
   });
   document.querySelectorAll("[data-demo]").forEach((button) => button.addEventListener("click", async () => {
-    await sound.arm();
     state.notes = [];
     state.selectedChord = null;
     state.beat = 0;
     demos[button.dataset.demo].forEach((note) => recordNote(note));
     render();
-    state.notes.forEach((note, index) => {
-      sound.playNote(note.note, note.velocity, note.duration, "lead", index * 0.16, "melody");
-      window.setTimeout(() => flashKey(note.note), index * 160);
+    state.notes.forEach((note, index) => window.setTimeout(() => flashKey(note.note), index * 160));
+    sound.arm().then(() => {
+      state.notes.forEach((note, index) => {
+        sound.playNote(note.note, note.velocity, note.duration, "lead", index * 0.16, "melody");
+      });
+      sound.playAccompaniment(renderedEvents, renderedBpm);
     });
-    sound.playAccompaniment(renderedEvents, renderedBpm);
   }));
   document.querySelectorAll("[data-style]").forEach((button) => button.addEventListener("click", () => {
     state.style = button.dataset.style;
     render();
-    sound.playAccompaniment(renderedEvents, renderedBpm);
+    sound.arm().then(() => sound.playAccompaniment(renderedEvents, renderedBpm));
   }));
   document.querySelectorAll("[data-bias]").forEach((button) => button.addEventListener("click", () => {
     state.bias = button.dataset.bias;
     render();
-    sound.playAccompaniment(renderedEvents, renderedBpm);
+    sound.arm().then(() => sound.playAccompaniment(renderedEvents, renderedBpm));
   }));
   audioToggle.addEventListener("click", () => sound.setEnabled(!sound.enabled));
   volumeInput.addEventListener("input", () => sound.setVolume(volumeInput.value));

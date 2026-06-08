@@ -177,6 +177,11 @@ Design intent:
 - Added GitHub Actions CI/CD.
 - Enabled and verified GitHub Pages deployment.
 - Pushed current work to GitHub.
+- Replaced the Web keyboard grid with a piano-style keyboard:
+  - 10 white keys from C4 to E5.
+  - 7 black keys overlaid between the white keys.
+  - Works in both the static GitHub Pages demo and the FastAPI-backed local UI.
+  - UI updates before WebAudio arming so note input remains responsive even when browser audio setup is delayed.
 
 ## Known Gaps And Risks
 
@@ -255,4 +260,3 @@ python -m pytest --cov=realtime_accompanist --cov-report=term-missing --cov-fail
 Recommended next task:
 Add a thin MIDI input adapter with synthetic message tests, while preserving the Web I/O demo.
 ```
-

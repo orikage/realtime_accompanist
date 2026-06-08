@@ -21,7 +21,13 @@ def test_pages_site_is_self_contained_static_demo():
     assert "arm()" in app
     assert "AudioContext" in app
     assert "Generated Accompaniment Events" in index
-    assert ".keyboard button.playing" in styles
+    assert "white-keys" in app
+    assert "black-keys" in app
+    assert "D#5" in app
+    assert "grid-template-columns: repeat(10" in styles
+    assert ".keyboard .key.black" in styles
+    assert "left: calc(var(--left) * 1%)" in styles
+    assert ".keyboard .key.playing" in styles
     assert "@media (max-width: 860px)" in styles
 
 

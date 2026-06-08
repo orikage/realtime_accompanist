@@ -2,21 +2,26 @@ const stateUrl = "/api/state";
 const keyboard = document.querySelector("#keyboard");
 const audioToggle = document.querySelector("#audio-toggle");
 const volumeInput = document.querySelector("#volume");
-const noteButtons = [
-  ["C4", 60, false],
-  ["D4", 62, false],
-  ["E4", 64, false],
-  ["F4", 65, false],
-  ["G4", 67, false],
-  ["A4", 69, false],
-  ["B4", 71, false],
-  ["C#4", 61, true],
-  ["D#4", 63, true],
-  ["F#4", 66, true],
-  ["G#4", 68, true],
-  ["A#4", 70, true],
-  ["C5", 72, false],
-  ["E5", 76, false],
+const whiteKeys = [
+  ["C4", 60],
+  ["D4", 62],
+  ["E4", 64],
+  ["F4", 65],
+  ["G4", 67],
+  ["A4", 69],
+  ["B4", 71],
+  ["C5", 72],
+  ["D5", 74],
+  ["E5", 76],
+];
+const blackKeys = [
+  ["C#4", 61, 10],
+  ["D#4", 63, 20],
+  ["F#4", 66, 40],
+  ["G#4", 68, 50],
+  ["A#4", 70, 60],
+  ["C#5", 73, 80],
+  ["D#5", 75, 90],
 ];
 
 class BrowserSound {
@@ -312,13 +317,12 @@ function render(state) {
   document.querySelector("#chords").innerHTML = state.chord_candidates
     .map((candidate) => `<button class="chip" data-chord="${candidate.symbol}">${candidate.symbol}<br>${pct(candidate.confidence)}</button>`)
     .join("");
-  document.querySelectorAll("[data-chord]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      await sound.arm();
-      const nextState = await post("/api/controls/chord", { symbol: button.dataset.chord });
-      sound.playAccompaniment(nextState.accompaniment_events, nextState.bpm);
+    document.querySelectorAll("[data-chord]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const nextState = await post("/api/controls/chord", { symbol: button.dataset.chord });
+        sound.arm().then(() => sound.playAccompaniment(nextState.accompaniment_events, nextState.bpm));
+      });
     });
-  });
 
   document.querySelector("#recent-notes").innerHTML = state.recent_notes
     .slice()
@@ -348,28 +352,35 @@ function flashKey(note) {
 
 async function sendNote(note, velocity = 104, duration = 0.4) {
   const safeNote = normalizeNote(note);
-  await sound.arm();
-  sound.playNote(safeNote, velocity, duration, "lead");
   flashKey(safeNote);
   const state = await post("/api/notes", { note: safeNote, velocity, duration });
-  sound.playAccompaniment(state.accompaniment_events, state.bpm);
+  sound.arm().then(() => {
+    sound.playNote(safeNote, velocity, duration, "lead");
+    sound.playAccompaniment(state.accompaniment_events, state.bpm);
+  });
 }
 
 function initKeyboard() {
-  keyboard.innerHTML = noteButtons
-    .map(([label, note, black]) => `<button class="${black ? "black" : ""}" data-note="${note}">${label}</button>`)
-    .join("");
-  keyboard.querySelectorAll("[data-note]").forEach((button) => {
-    let pointerSentAt = 0;
-    button.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      pointerSentAt = Date.now();
-      sendNote(Number(button.dataset.note), 104, 0.4);
-    });
-    button.addEventListener("click", () => {
-      if (Date.now() - pointerSentAt < 500) return;
-      sendNote(Number(button.dataset.note), 104, 0.4);
-    });
+  keyboard.innerHTML = `
+    <div class="white-keys">
+      ${whiteKeys.map(([label, note]) => `<button class="key white" data-note="${note}"><span>${label}</span></button>`).join("")}
+    </div>
+    <div class="black-keys" aria-hidden="false">
+      ${blackKeys.map(([label, note, left]) => `<button class="key black" style="--left: ${left}" data-note="${note}"><span>${label}</span></button>`).join("")}
+    </div>
+  `;
+  let pointerSentAt = 0;
+  keyboard.addEventListener("pointerdown", (event) => {
+    const button = event.target.closest("[data-note]");
+    if (!button) return;
+    event.preventDefault();
+    pointerSentAt = Date.now();
+    sendNote(Number(button.dataset.note), 104, 0.4);
+  });
+  keyboard.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-note]");
+    if (!button || Date.now() - pointerSentAt < 500) return;
+    sendNote(Number(button.dataset.note), 104, 0.4);
   });
 }
 
@@ -385,25 +396,26 @@ function initControls() {
   });
   document.querySelectorAll("[data-demo]").forEach((button) => {
     button.addEventListener("click", async () => {
-      await sound.arm();
       const state = await post(`/api/demo/${button.dataset.demo}`);
-      state.recent_notes.forEach((note, index) => {
-        sound.playNote(note.note, note.velocity, note.duration, "lead", index * 0.16, "melody");
-        window.setTimeout(() => flashKey(note.note), index * 160);
+      state.recent_notes.forEach((note, index) => window.setTimeout(() => flashKey(note.note), index * 160));
+      sound.arm().then(() => {
+        state.recent_notes.forEach((note, index) => {
+          sound.playNote(note.note, note.velocity, note.duration, "lead", index * 0.16, "melody");
+        });
+        sound.playAccompaniment(state.accompaniment_events, state.bpm);
       });
-      sound.playAccompaniment(state.accompaniment_events, state.bpm);
     });
   });
   document.querySelectorAll("[data-style]").forEach((button) => {
     button.addEventListener("click", async () => {
       const state = await post("/api/controls/style", { style: button.dataset.style });
-      sound.playAccompaniment(state.accompaniment_events, state.bpm);
+      sound.arm().then(() => sound.playAccompaniment(state.accompaniment_events, state.bpm));
     });
   });
   document.querySelectorAll("[data-bias]").forEach((button) => {
     button.addEventListener("click", async () => {
       const state = await post("/api/controls/bias", { bias: button.dataset.bias });
-      sound.playAccompaniment(state.accompaniment_events, state.bpm);
+      sound.arm().then(() => sound.playAccompaniment(state.accompaniment_events, state.bpm));
     });
   });
 }
