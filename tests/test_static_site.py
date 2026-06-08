@@ -13,8 +13,15 @@ def test_pages_site_is_self_contained_static_demo():
     assert "./styles.css" in index
     assert "/api/" not in app
     assert "Demo C" in index
+    assert "audio-toggle" in index
     assert "estimateKeys" in app
+    assert "class BrowserSound" in app
+    assert "playNote" in app
+    assert "playAccompaniment" in app
+    assert "arm()" in app
+    assert "AudioContext" in app
     assert "Generated Accompaniment Events" in index
+    assert ".keyboard button.playing" in styles
     assert "@media (max-width: 860px)" in styles
 
 

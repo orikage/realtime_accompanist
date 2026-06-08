@@ -56,6 +56,7 @@ button.active {
 .workspace,
 .toolbar,
 .manual,
+.audio-controls,
 .segmented,
 .chips {
   display: flex;
@@ -146,6 +147,12 @@ h1 {
   color: var(--text);
 }
 
+.keyboard button.playing {
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 3px rgb(240 191 100 / 28%);
+  transform: translateY(1px);
+}
+
 .manual input {
   min-width: 0;
   flex: 1;
@@ -154,6 +161,30 @@ h1 {
   background: var(--panel-2);
   color: var(--text);
   padding: 0 10px;
+}
+
+.audio-controls {
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.audio-controls button {
+  min-width: 108px;
+}
+
+.volume-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 180px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.volume-control input {
+  width: 128px;
+  accent-color: var(--accent);
 }
 
 .chips {
@@ -212,4 +243,3 @@ h1 {
     font-size: 24px;
   }
 }
-

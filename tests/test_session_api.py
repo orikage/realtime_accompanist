@@ -28,6 +28,13 @@ def test_api_accepts_note_io_and_returns_estimates():
     assert state["key_candidates"][0]["name"] == "C major"
     assert state["chord_candidates"][0]["symbol"] == "C"
 
+    # Verify accompaniment event structure for WebAudio frontend
+    assert len(state["accompaniment_events"]) > 0
+    event = state["accompaniment_events"][0]
+    for field in ["part", "note", "beat", "duration_beats", "velocity", "time_seconds"]:
+        assert field in event
+        assert event[field] is not None
+
 
 def test_api_supports_controls_demo_and_reset():
     client = TestClient(create_app())
