@@ -17,3 +17,7 @@ def test_pages_site_is_self_contained_static_demo():
     assert "Generated Accompaniment Events" in index
     assert "@media (max-width: 860px)" in styles
 
+
+def test_root_pages_files_match_site_artifact():
+    for filename in ["index.html", "app.js", "styles.css"]:
+        assert (ROOT / filename).read_text(encoding="utf-8") == (ROOT / "site" / filename).read_text(encoding="utf-8")
