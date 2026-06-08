@@ -32,6 +32,10 @@ class BrowserSound {
     this.enabled = false;
     this.volume = Number(volumeInput?.value || 0.72);
     this.active = [];
+    this._loopHandle = null;
+    this._currentEvents = [];
+    this._currentBpm = 90;
+    this._loopStartTime = null;
   }
 
   async setEnabled(enabled) {
@@ -51,7 +55,9 @@ class BrowserSound {
         return;
       }
     } else {
+      this.stopLoop();
       this.stopTag("accompaniment");
+      this.stopTag("melody");
     }
     this.updateUi();
   }
@@ -147,9 +153,7 @@ class BrowserSound {
       try {
         filter.disconnect();
         gain.disconnect();
-      } catch {
-        // Nodes can already be disconnected when a sequence is interrupted.
-      }
+      } catch {}
     });
   }
 
@@ -235,12 +239,38 @@ class BrowserSound {
     return buffer;
   }
 
-  playAccompaniment(events = [], bpm = 90) {
-    if (!this.enabled || !events.length) return;
+  updateAccompaniment(events, bpm) {
+    this._currentEvents = events || [];
+    this._currentBpm = Math.max(Number(bpm) || 90, 1);
+    if (this._currentEvents.length && this.enabled && !this._loopHandle) {
+      this.startLoop();
+    }
+  }
+
+  startLoop() {
+    if (this._loopHandle) return;
+    this._scheduleBar();
+  }
+
+  stopLoop() {
+    if (this._loopHandle) {
+      clearTimeout(this._loopHandle);
+      this._loopHandle = null;
+    }
+    this._loopStartTime = null;
     this.stopTag("accompaniment");
-    const beatSeconds = 60 / Math.max(Number(bpm) || 90, 1);
-    events.slice(0, 18).forEach((event) => {
-      const delay = Math.max(0, Number(event.time_seconds ?? event.beat * beatSeconds) || 0) + 0.035;
+  }
+
+  _scheduleBar() {
+    if (!this.enabled || !this._currentEvents.length) {
+      this._loopHandle = null;
+      return;
+    }
+    this.stopTag("accompaniment");
+    const beatSeconds = 60 / this._currentBpm;
+    const barDuration = 4 * beatSeconds;
+    this._currentEvents.forEach((event) => {
+      const delay = Math.max(0, Number(event.time_seconds ?? event.beat * beatSeconds) || 0) + 0.02;
       const duration = Math.max(0.08, Number(event.duration_beats || 0.25) * beatSeconds);
       if (event.part === "drums") {
         this.playDrum(event.note, event.velocity, delay);
@@ -248,6 +278,10 @@ class BrowserSound {
         this.playNote(event.note, event.velocity, duration, event.part === "bass" ? "bass" : "pad", delay, "accompaniment");
       }
     });
+    this._loopHandle = setTimeout(() => {
+      this._loopHandle = null;
+      this._scheduleBar();
+    }, barDuration * 1000);
   }
 
   track(node, tag) {
@@ -268,15 +302,15 @@ class BrowserSound {
       } catch {
         try {
           node.disconnect?.();
-        } catch {
-          // A disconnected node is already silent.
-        }
+        } catch {}
       }
     });
   }
 }
 
 const sound = new BrowserSound();
+let currentState = null;
+let ws = null;
 
 function normalizeNote(value, fallback = 60) {
   const parsed = Number(value);
@@ -295,12 +329,20 @@ async function post(url, body = {}) {
     body: JSON.stringify(body),
   });
   const state = await response.json();
-  render(state);
+  applyState(state);
   return state;
 }
 
+function applyState(state) {
+  currentState = state;
+  render(state);
+  if (sound.enabled && state.accompaniment_events?.length) {
+    sound.updateAccompaniment(state.accompaniment_events, state.bpm);
+  }
+}
+
 function render(state) {
-  const topKey = state.key_candidates[0];
+  const topKey = state.key_candidates?.[0];
   document.querySelector("#primary-key").textContent = topKey ? topKey.name : "-";
   document.querySelector("#selected-chord").textContent = state.selected_chord || "-";
   document.querySelector("#style").textContent = state.style;
@@ -308,29 +350,34 @@ function render(state) {
   document.querySelector("#confidence-text").textContent = pct(state.confidence);
   document.querySelector("#confidence-bar").style.width = pct(state.confidence);
   document.querySelector("#next-likely").textContent = `Next: ${(state.next_likely || []).join(" / ") || "-"}`;
-  document.querySelector("#status").textContent = state.recent_notes.length ? "Estimating" : "Listening";
 
-  document.querySelector("#keys").innerHTML = state.key_candidates
+  const statusEl = document.querySelector("#status");
+  if (state.clock_running) {
+    statusEl.textContent = `Bar ${state.bar ?? 0} | Beat ${(state.beat_in_bar ?? 0).toFixed(1)}`;
+  } else {
+    statusEl.textContent = state.recent_notes?.length ? "Estimating" : "Listening";
+  }
+
+  document.querySelector("#keys").innerHTML = (state.key_candidates || [])
     .map((candidate) => `<div class="list-row">${candidate.name} ${pct(candidate.confidence)}</div>`)
     .join("");
 
-  document.querySelector("#chords").innerHTML = state.chord_candidates
+  document.querySelector("#chords").innerHTML = (state.chord_candidates || [])
     .map((candidate) => `<button class="chip" data-chord="${candidate.symbol}">${candidate.symbol}<br>${pct(candidate.confidence)}</button>`)
     .join("");
-    document.querySelectorAll("[data-chord]").forEach((button) => {
-      button.addEventListener("click", async () => {
-        const nextState = await post("/api/controls/chord", { symbol: button.dataset.chord });
-        sound.arm().then(() => sound.playAccompaniment(nextState.accompaniment_events, nextState.bpm));
-      });
+  document.querySelectorAll("[data-chord]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await post("/api/controls/chord", { symbol: button.dataset.chord });
     });
+  });
 
-  document.querySelector("#recent-notes").innerHTML = state.recent_notes
+  document.querySelector("#recent-notes").innerHTML = (state.recent_notes || [])
     .slice()
     .reverse()
     .map((note) => `<div class="note">${note.name}<br><small>${note.note}</small></div>`)
     .join("");
 
-  document.querySelector("#events").innerHTML = state.accompaniment_events
+  document.querySelector("#events").innerHTML = (state.accompaniment_events || [])
     .slice(0, 14)
     .map((event) => `<div class="event-row">${event.part} note ${event.note} @ beat ${event.beat}</div>`)
     .join("");
@@ -341,26 +388,49 @@ function render(state) {
   document.querySelectorAll("[data-bias]").forEach((button) => {
     button.classList.toggle("active", button.dataset.bias === state.bias);
   });
+  const keyLockBtn = document.querySelector("#key-lock");
+  if (keyLockBtn) {
+    keyLockBtn.textContent = state.key_lock ? "Key Lock: On" : "Key Lock: Off";
+    keyLockBtn.classList.toggle("active", !!state.key_lock);
+  }
 }
 
 function flashKey(note) {
-  const button = keyboard.querySelector(`[data-note="${note}"]`);
+  const button = keyboard?.querySelector(`[data-note="${note}"]`);
   if (!button) return;
   button.classList.add("playing");
   window.setTimeout(() => button.classList.remove("playing"), 150);
 }
 
+const heldKeys = new Map();
+
+async function keyDown(note, velocity = 104) {
+  if (heldKeys.has(note)) return;
+  heldKeys.set(note, Date.now());
+  const safeNote = normalizeNote(note);
+  flashKey(safeNote);
+  sound.arm().then(() => sound.playNote(safeNote, velocity, 0.5, "lead"));
+  await post("/api/note-on", { note: safeNote, velocity });
+}
+
+async function keyUp(note) {
+  if (!heldKeys.has(note)) return;
+  heldKeys.delete(note);
+  const safeNote = normalizeNote(note);
+  const button = keyboard?.querySelector(`[data-note="${safeNote}"]`);
+  if (button) button.classList.remove("playing");
+  await post("/api/note-off", { note: safeNote });
+}
+
 async function sendNote(note, velocity = 104, duration = 0.4) {
   const safeNote = normalizeNote(note);
   flashKey(safeNote);
-  const state = await post("/api/notes", { note: safeNote, velocity, duration });
-  sound.arm().then(() => {
-    sound.playNote(safeNote, velocity, duration, "lead");
-    sound.playAccompaniment(state.accompaniment_events, state.bpm);
-  });
+  sound.arm().then(() => sound.playNote(safeNote, velocity, duration, "lead"));
+  await post("/api/notes", { note: safeNote, velocity, duration });
 }
 
 function initKeyboard() {
+  if (!keyboard) return;
   keyboard.innerHTML = `
     <div class="white-keys">
       ${whiteKeys.map(([label, note]) => `<button class="key white" data-note="${note}"><span>${label}</span></button>`).join("")}
@@ -369,54 +439,73 @@ function initKeyboard() {
       ${blackKeys.map(([label, note, left]) => `<button class="key black" style="--left: ${left}" data-note="${note}"><span>${label}</span></button>`).join("")}
     </div>
   `;
-  let pointerSentAt = 0;
   keyboard.addEventListener("pointerdown", (event) => {
     const button = event.target.closest("[data-note]");
     if (!button) return;
     event.preventDefault();
-    pointerSentAt = Date.now();
-    sendNote(Number(button.dataset.note), 104, 0.4);
+    keyDown(Number(button.dataset.note), 104);
   });
-  keyboard.addEventListener("click", (event) => {
+  keyboard.addEventListener("pointerup", (event) => {
     const button = event.target.closest("[data-note]");
-    if (!button || Date.now() - pointerSentAt < 500) return;
-    sendNote(Number(button.dataset.note), 104, 0.4);
+    if (!button) return;
+    keyUp(Number(button.dataset.note));
+  });
+  keyboard.addEventListener("pointerleave", (event) => {
+    const button = event.target.closest("[data-note]");
+    if (!button) return;
+    keyUp(Number(button.dataset.note));
   });
 }
 
+function initWebSocket() {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  ws = new WebSocket(`${protocol}//${window.location.host}/ws/state`);
+  ws.onmessage = (event) => {
+    try {
+      const state = JSON.parse(event.data);
+      applyState(state);
+    } catch {}
+  };
+  ws.onclose = () => {
+    setTimeout(initWebSocket, 2000);
+  };
+}
+
 function initControls() {
-  audioToggle.addEventListener("click", () => sound.setEnabled(!sound.enabled));
-  volumeInput.addEventListener("input", () => sound.setVolume(volumeInput.value));
-  document.querySelector("#send-note").addEventListener("click", () => {
+  audioToggle?.addEventListener("click", () => sound.setEnabled(!sound.enabled));
+  volumeInput?.addEventListener("input", () => sound.setVolume(volumeInput.value));
+  document.querySelector("#send-note")?.addEventListener("click", () => {
     sendNote(document.querySelector("#note-input").value, 100, 0.4);
   });
-  document.querySelector("#reset").addEventListener("click", async () => {
+  document.querySelector("#reset")?.addEventListener("click", async () => {
+    sound.stopLoop();
     sound.stopTag("accompaniment");
+    sound.stopTag("melody");
     await post("/api/reset");
   });
   document.querySelectorAll("[data-demo]").forEach((button) => {
     button.addEventListener("click", async () => {
       const state = await post(`/api/demo/${button.dataset.demo}`);
-      state.recent_notes.forEach((note, index) => window.setTimeout(() => flashKey(note.note), index * 160));
       sound.arm().then(() => {
-        state.recent_notes.forEach((note, index) => {
+        (state.recent_notes || []).forEach((note, index) => {
+          window.setTimeout(() => flashKey(note.note), index * 160);
           sound.playNote(note.note, note.velocity, note.duration, "lead", index * 0.16, "melody");
         });
-        sound.playAccompaniment(state.accompaniment_events, state.bpm);
       });
     });
   });
   document.querySelectorAll("[data-style]").forEach((button) => {
     button.addEventListener("click", async () => {
-      const state = await post("/api/controls/style", { style: button.dataset.style });
-      sound.arm().then(() => sound.playAccompaniment(state.accompaniment_events, state.bpm));
+      await post("/api/controls/style", { style: button.dataset.style });
     });
   });
   document.querySelectorAll("[data-bias]").forEach((button) => {
     button.addEventListener("click", async () => {
-      const state = await post("/api/controls/bias", { bias: button.dataset.bias });
-      sound.arm().then(() => sound.playAccompaniment(state.accompaniment_events, state.bpm));
+      await post("/api/controls/bias", { bias: button.dataset.bias });
     });
+  });
+  document.querySelector("#key-lock")?.addEventListener("click", async () => {
+    await post("/api/controls/key-lock");
   });
 }
 
@@ -424,8 +513,11 @@ async function boot() {
   initKeyboard();
   initControls();
   sound.updateUi();
-  const response = await fetch(stateUrl);
-  render(await response.json());
+  try {
+    const response = await fetch(stateUrl);
+    applyState(await response.json());
+  } catch {}
+  initWebSocket();
 }
 
 boot();

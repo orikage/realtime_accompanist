@@ -3,187 +3,167 @@
 ## Overall
 
 ```text
-MIDI Keyboard
-  ↓
-MIDI Input Layer
-  ↓
-Melody Buffer
-  ↓
-Key Estimator
-  ↓
-Chord Estimator
-  ↓
-Progression Smoother
-  ↓
-Accompaniment Engine
-  ↓
-MIDI Output / FluidSynth / DAW
-  ↓
-Speaker
-
-Parallel:
-State Store → WebSocket → Web UI
-```
-
-## Modules
-
-### midi_input
-
-責務:
-
-- MIDIデバイス一覧取得
-- MIDI note_on/note_off受信
-- velocity取得
-- note duration計算
-- clockに対するbeat/bar位置付与
-
-出力:
-
-```python
-NoteEvent(note=60, velocity=82, start_time=1.23, duration=0.45, beat=2.0)
-```
-
-### clock
-
-責務:
-
-- BPM管理
-- beat/bar位置計算
-- 小節頭/拍頭イベント発火
-- 伴奏スケジューリング
-
-MVPでは固定BPMでよい。
-将来的にはtap tempoやMIDI clockに対応。
-
-### melody_buffer
-
-責務:
-
-- 直近ノート履歴保持
-- 2小節/4小節窓の取得
-- 強拍、長音、終端音などの特徴量計算
-
-### key_estimator
-
-責務:
-
-- 12キー major/minorの候補スコア計算
-- 確信度算出
-
-### chord_estimator
-
-責務:
-
-- 現在キーに基づく候補コード生成
-- メロディとの一致度計算
-- 直前コードとの遷移スコア計算
-- 候補ランキング出力
-
-### progression_smoother
-
-責務:
-
-- コードが頻繁に変わりすぎないよう補正
-- 小節単位/拍単位でコードを確定
-- ベースラインの跳躍を抑える
-- 確信度が低い場合は曖昧コード/sus/no3/5度中心にする
-
-### accompaniment_engine
-
-責務:
-
-- スタイル別伴奏パターン読込
-- ドラム/ベース/コード/アルペジオ生成
-- 確信度に応じた密度制御
-- MIDI出力イベント生成
-
-### sound_engine
-
-責務:
-
-- FluidSynthや外部MIDIポートへの出力
-- channel割当
-- program change
-- note_on/note_off送信
-
-### ui_server
-
-責務:
-
-- 現在状態をWebSocketで配信
-- UIからの操作を受け取る
-  - style change
-  - key lock
-  - chord select
-  - major/minor bias
-  - start/stop
-
-## State Model
-
-```python
-@dataclass
-class SystemState:
-    bpm: float
-    bar: int
-    beat: float
-    style: str
-    key_candidates: list[KeyCandidate]
-    chord_candidates: list[ChordCandidate]
-    selected_key: str | None
-    selected_chord: str | None
-    confidence: float
-    density: float
-    mode: str
+MIDI Keyboard (or Web Keyboard)
+  |
+  v
+Note Input (note_on / note_off / add_note)
+  |
+  v
+Melody Buffer (ring buffer, max 128 events)
+  |
+  +-- recent_beats(KEY_WINDOW=16) --> Key Estimator
+  |                                     |
+  +-- recent_beats(CHORD_WINDOW=4) --> Chord Estimator
+  |                                     |
+  v                                     v
+Musical Clock (BPM, beat, bar)     Chord Candidates
+  |                                     |
+  +-- bar boundary tick ----------> Progression Smoother
+                                        |
+                                        v
+                                   Selected Chord
+                                        |
+                                        v
+                                   Accompaniment Engine
+                                        |
+                                        v
+                                   Accompaniment Events
+                                        |
+                                        v
+                                   WebSocket broadcast --> Web UI
+                                        |
+                                        v
+                                   Browser WebAudio (continuous loop)
 ```
 
 ## Processing Loop
 
-1. MIDI event received
-2. Update note state and melody buffer
-3. Recompute key candidates
-4. Recompute chord candidates
-5. Update UI state immediately
-6. On next beat/bar boundary:
-   - choose chord via smoother
-   - schedule accompaniment pattern
-   - send MIDI to sound engine
+1. User plays notes (MIDI or Web keyboard)
+2. `note_on` → buffer records start time; `note_off` → computes duration, adds to buffer
+3. On every server tick (~100ms):
+   - Check if bar boundary crossed
+   - If yes: run windowed estimation → smoother selects chord → regenerate accompaniment
+4. `snapshot()` always uses windowed data:
+   - Key estimation: last **16 beats** (~4 bars at 4/4)
+   - Chord estimation: last **4 beats** (~1 bar at 4/4)
+5. WebSocket broadcasts state to all connected clients
+6. Client plays accompaniment as a **continuous loop** (one bar at a time, repeating)
+
+## Modules
+
+### clock (NEW)
+
+Responsibilities:
+
+- BPM-based beat/bar position tracking
+- Bar boundary detection
+- Seconds-to-next-beat/bar calculation
+- Start/stop/reset lifecycle
+
+### melody_buffer
+
+Responsibilities:
+
+- Ring buffer of recent NoteEvents (max 128)
+- Window queries: `recent_seconds()`, `recent_beats()`
+- Pitch class histogram with duration/velocity/recency weighting
+
+### key_estimator
+
+Responsibilities:
+
+- 12 tonic × 2 mode (major/minor) candidate scoring
+- Windowed input: receives only last 16 beats of notes
+- Scale match, tonic/dominant emphasis, phrase start/end weighting
+- Major/Minor bias support
+
+### chord_estimator
+
+Responsibilities:
+
+- Diatonic triad candidates from estimated key
+- Windowed input: receives only last 4 beats of notes
+- Melody-to-chord-tone matching with duration/velocity weighting
+- Root motion transition scoring
+- Relative major/minor cross-candidates for ambiguous melodies
+
+### progression_smoother
+
+Responsibilities:
+
+- Prevents chord flickering (min 4 beats between changes)
+- Confidence floor: holds current chord if top candidate is too weak
+- Switch margin: requires top candidate to clearly beat current
+- Manual override support
+- Chord changes only at bar boundaries (enforced by session tick)
+
+### accompaniment_engine
+
+Responsibilities:
+
+- Style-specific drum/bass/pad patterns (lofi, jpop, game_bgm)
+- Density control: low/medium/high based on confidence
+- MIDI-compatible event generation
+
+### session (application layer)
+
+Responsibilities:
+
+- Owns clock, buffer, estimators, smoother, accompaniment engine
+- `note_on` / `note_off` for real-time MIDI-style input
+- `add_note` for simplified web input (instant duration)
+- `tick()` called by server loop: checks bar boundary, runs estimation pipeline
+- `snapshot()` returns full UI state with windowed estimation
+- Key lock, style change, bias change, manual chord override, reset
+
+### web app (FastAPI)
+
+Responsibilities:
+
+- REST API for note input and controls
+- WebSocket state broadcast
+- Lifespan-managed tick loop (~100ms interval)
+- Static file serving for Web UI
+
+## State Model
+
+```python
+{
+    "bpm": 90.0,
+    "beat": 12.5,
+    "bar": 3,
+    "beat_in_bar": 0.5,
+    "style": "lofi",
+    "bias": "auto",
+    "key_lock": false,
+    "density": "medium",
+    "confidence": 0.72,
+    "selected_chord": "Am",
+    "key_candidates": [...],
+    "chord_candidates": [...],
+    "next_likely": ["F", "Dm", "G"],
+    "recent_notes": [...],
+    "accompaniment_events": [...],
+    "clock_running": true
+}
+```
 
 ## Quantization Policy
 
-- UI: immediate update
-- Pad chord: bar boundary preferred
-- Bass: beat or bar boundary
-- Drums: continuous loop
-- Fill: bar end
+- UI state: updated immediately on note input and on every tick
+- Chord selection: only at **bar boundaries** (via tick loop)
+- Manual chord override: applied immediately (force flag)
+- Accompaniment regeneration: on chord change or style change
+- Client playback: continuous bar-length loop
 
-## Suggested Folder Structure
+## Key Design Decisions
 
-```text
-realtime_accompanist/
-  pyproject.toml
-  README.md
-  app/
-    main.py
-    midi_input.py
-    clock.py
-    melody_buffer.py
-    theory.py
-    key_estimator.py
-    chord_estimator.py
-    progression_smoother.py
-    accompaniment.py
-    sound_engine.py
-    ui_server.py
-    models.py
-  patterns/
-    jpop.json
-    lofi.json
-    game_bgm.json
-  web/
-    index.html
-    src/
-      App.tsx
-  tests/
-    test_key_estimator.py
-    test_chord_estimator.py
-```
+1. **Windowed estimation, not full-history**: Key uses 16-beat window, chord uses 4-beat window. This matches R2/R3 requirements and ensures the system responds to the melody being played *now*, not notes from minutes ago.
+
+2. **Bar-boundary chord changes**: Chord selection happens at bar boundaries, not on every note. This prevents the "chord flickering" problem and produces musically natural transitions (R5).
+
+3. **Continuous accompaniment loop**: The client plays accompaniment in a repeating bar-length loop. New chord selections update the loop content, but the rhythm doesn't restart on every note.
+
+4. **note_on/note_off separation**: Supports real MIDI-style input with held notes and measured durations, while `add_note` provides a convenience method for web input.
+
+5. **Clock-driven tick**: The server runs a ~100ms tick loop that drives the estimation pipeline. This decouples note input timing from chord selection timing.

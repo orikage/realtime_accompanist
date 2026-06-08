@@ -1,8 +1,16 @@
 # Realtime Accompanist
 
-MIDIキーボードで右手メロディを弾いたときに、直近フレーズからキー・コード候補を推定し、伴奏イベントを生成する展示向けMVPです。
+MIDIキーボードで右手メロディを弾くと、直近フレーズからキー・コード候補を推定し、ドラム・ベース・コード伴奏をリアルタイム生成する展示向けAI伴奏楽器です。
 
-現時点ではMIDI実機に依存する部分を急がず、Web画面からノート入力を行えるようにしています。これにより、推定ロジック、スムージング、伴奏生成、APIを自動テストで確認できます。
+## How It Works
+
+1. メロディを弾く（Web鍵盤 or MIDI）
+2. 直近4小節のノートからキー候補を推定
+3. 直近1小節のノートからコード候補を推定
+4. 小節頭でコードを確定し、伴奏パターンを生成
+5. ブラウザで伴奏を連続ループ再生
+
+推定は確定ではなく候補と確信度として扱い、確信度に応じて伴奏の密度が変わります。
 
 ## Run
 
@@ -16,45 +24,50 @@ Open:
 http://127.0.0.1:8000
 ```
 
-## GitHub Pages
-
-Static browser demo:
-
-```text
-https://orikage.github.io/realtime_accompanist/
-```
-
-The Pages version runs without the FastAPI backend, so it is useful for showing the estimation UI and accompaniment-event generation on GitHub Pages. The local FastAPI app remains the fuller Web/API version for MIDI adapter work.
-
 ## Test
 
 ```powershell
-.\.venv\Scripts\python -m pytest --cov=realtime_accompanist --cov-report=term-missing --cov-fail-under=85
+python -m pytest --cov=realtime_accompanist --cov-report=term-missing --cov-fail-under=85
 ```
 
-GitHub Actions runs the same coverage-gated test command before deploying Pages.
+47 tests, 90%+ coverage. GitHub Actions runs the same coverage-gated test command.
 
 ## What Works
 
-- Web UIからノート入力
-- デモフレーズ入力
-- キー候補推定
-- コード候補推定
+- Web鍵盤によるメロディ入力（note_on/note_off対応）
+- デモフレーズ入力（C major / Ambiguous / Genre Switch）
+- ウィンドウベースのキー候補推定（直近16ビート）
+- ウィンドウベースのコード候補推定（直近4ビート）
+- 小節頭でのコード切替（ProgressionSmoother）
 - 手動コード選択
+- Key Lock（キー固定）
 - Major / Minor / Auto バイアス
 - Lo-fi / J-POP / Game BGM スタイル切替
-- 伴奏イベント生成
-- Web APIとWebSocketの状態配信
+- 確信度に応じた伴奏密度変更
+- 連続伴奏ループ再生（WebAudio）
+- WebSocket による状態リアルタイム配信
+- 音楽クロック（BPM・拍・小節管理）
 
 ## Architecture
 
 ```text
 src/realtime_accompanist/
-  domain/        # 音楽理論、推定、スムージング、伴奏イベント生成
-  application/   # セッション状態とユースケース
-  web/           # FastAPI と静的Web UI
-tests/           # MIDI実機なしで回せる自動テスト
-docs/            # 添付ZIPと/goal由来の資料
+  domain/
+    clock.py             音楽クロック（BPM・拍・小節）
+    melody_buffer.py     ノート履歴バッファ（ウィンドウクエリ）
+    key_estimator.py     キー推定（直近16ビート）
+    chord_estimator.py   コード推定（直近4ビート）
+    progression_smoother.py  コード遷移スムージング
+    accompaniment.py     伴奏パターン生成
+    theory.py            音楽理論ユーティリティ
+    models.py            ドメインモデル
+  application/
+    session.py           セッション管理（クロック駆動ティック）
+  web/
+    app.py               FastAPI（REST + WebSocket + ティックループ）
+    static/              Web UI
+tests/                   自動テスト（47テスト、90%+カバレッジ）
+docs/                    要件・アーキテクチャ・進捗
 ```
 
-MIDIや音源出力は今後の外部I/Oアダプタとして追加する想定です。中心ロジックは外部I/Oから分離してあるため、実機テストが難しい部分をWeb入力で代替できます。
+MIDIや音源出力は今後の外部I/Oアダプタとして追加する想定です。コアロジックは外部I/Oから分離してあるため、Web入力で代替テスト可能です。
