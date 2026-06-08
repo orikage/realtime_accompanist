@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Realtime Accompanist Demo</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="stage">
+        <div class="topline">
+          <h1>Realtime Accompanist</h1>
+          <div class="status" id="status">Browser Demo</div>
+        </div>
+        <p class="lede">GitHub Pages版は、MIDI実機なしで推定UIと伴奏イベント生成を試せるブラウザ単体デモです。</p>
+        <div class="hero-grid">
+          <section class="panel emphasis">
+            <span class="label">Key</span>
+            <div class="primary" id="primary-key">C major</div>
+            <div class="meter"><span id="confidence-bar"></span></div>
+            <div class="subtle" id="confidence-text">0%</div>
+          </section>
+          <section class="panel">
+            <span class="label">Selected Chord</span>
+            <div class="primary" id="selected-chord">-</div>
+            <div class="subtle" id="next-likely">Next: -</div>
+          </section>
+          <section class="panel">
+            <span class="label">Style</span>
+            <div class="primary" id="style">lofi</div>
+            <div class="subtle" id="density">Density: low</div>
+          </section>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <div class="column">
+          <div class="toolbar">
+            <button data-demo="c-major">Demo C</button>
+            <button data-demo="ambiguous">Demo Am/C</button>
+            <button data-demo="genre-switch">Demo Genre</button>
+            <button id="reset">Reset</button>
+          </div>
+          <div class="keyboard" id="keyboard"></div>
+          <div class="manual">
+            <input id="note-input" type="number" min="0" max="127" value="60" />
+            <button id="send-note">Send Note</button>
+          </div>
+        </div>
+
+        <div class="column">
+          <section class="panel">
+            <span class="label">Chord Candidates</span>
+            <div class="chips" id="chords"></div>
+          </section>
+          <section class="panel">
+            <span class="label">Key Candidates</span>
+            <div class="list" id="keys"></div>
+          </section>
+          <section class="panel">
+            <span class="label">Recent Notes</span>
+            <div class="timeline" id="recent-notes"></div>
+          </section>
+        </div>
+
+        <div class="column">
+          <section class="panel">
+            <span class="label">Controls</span>
+            <div class="segmented" id="styles">
+              <button data-style="lofi">Lo-fi</button>
+              <button data-style="jpop">J-POP</button>
+              <button data-style="game_bgm">Game BGM</button>
+            </div>
+            <div class="segmented" id="biases">
+              <button data-bias="auto">Auto</button>
+              <button data-bias="major">Major</button>
+              <button data-bias="minor">Minor</button>
+            </div>
+          </section>
+          <section class="panel">
+            <span class="label">Generated Accompaniment Events</span>
+            <div class="events" id="events"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>
+
